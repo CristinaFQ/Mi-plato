@@ -1,0 +1,175 @@
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { supabase } from '../lib/supabase.js';
+import { createFoodStore } from '../lib/repository.js';
+import { usePlan, localDate } from '../lib/usePlan.js';
+import { MACROS, MEALS, RECIPE, BREAD_FILLINGS, YOGURTS, YOGURT_GRAMS, FRUIT_REFERENCE_NOTICE, ingredientFood, clearMeal, calculateDinnerRemainder, useRemainingDinnerProtein, setUnitWeight, budget, dayTotals, preset, updateCoffee, updateAmount, setSlot, setProteinGoal, validatePlan, unit, value100, sum, isBreakfastOnly, validateDocument, migrateLegacy } from '../lib/engine.js';
+const fmt = n => Number.isFinite(n) ? new Intl.NumberFormat('es-ES', { maximumFractionDigits: 1 }).format(n) : '—';
+const macroNames = { kcal: 'Energía', proteinas: 'Proteínas', carbohidratos: 'Carbohidratos', grasas: 'Grasas' };
+const groupNames = { proteina: 'Proteínas', verdura: 'Verduras', carbohidrato: 'Carbohidratos', grasa: 'Frutos secos y semillas', fruta: 'Frutas', lacteos: 'Lácteos', otros: 'Otros autorizados' };
+const roleNames = { protein: 'Proteína', vegetable: 'Verduras', carb: 'Carbohidrato' };
+const icons = { sun: <><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M5 5l1.5 1.5m11 11L19 19M5 19l1.5-1.5m11-11L19 5"/></>, plate: <><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/></>, cup: <path d="M5 8h12v8a4 4 0 0 1-4 4H9a4 4 0 0 1-4-4V8Zm12 1h2a3 3 0 0 1 0 6h-2M8 3v2m5-2v2"/>, moon: <path d="M20.5 14a9 9 0 0 1-10.5-10.5A9 9 0 1 0 20.5 14Z"/>, clock: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>, plus: <path d="M12 5v14M5 12h14"/> };
+function Icon({ name }) { return <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{icons[name] || icons.plate}</svg>; }
+function Quantity({ value, onChange, label, suffix = 'g', min = 0.1, max = 10000 }) {
+  const [draft, setDraft] = useState(String(value ?? ''));
+  useEffect(() => { setDraft(String(value ?? '')); }, [value]);
+  return <span className="quantity"><span className="sr-only">{label}</span><input type="number" inputMode="decimal" min={min} max={max} step="any" value={draft} aria-label={label} onChange={event => { const text = event.target.value; setDraft(text); const n = Number(text); if (text !== '' && Number.isFinite(n) && n >= min && n <= max) onChange(n); }} onBlur={() => { const n = Number(draft); if (draft === '' || !Number.isFinite(n) || n < min || n > max) setDraft(String(value ?? '')); }}/><span>{suffix}</span></span>;
+}
+const normalizeSearch = text => text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+function SearchField({ value, onChange, label, placeholder }) {
+  const input = useRef(null);
+  return <div className="search-field"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><label><span className="sr-only">{label}</span><input ref={input} type="search" value={value} placeholder={placeholder} autoComplete="off" onChange={e=>onChange(e.target.value)} onKeyDown={e=>{if(e.key==='Escape'){onChange('');}}}/></label>{value&&<button type="button" aria-label="Limpiar búsqueda" onClick={()=>{onChange('');input.current?.focus();}}>×</button>}</div>;
+}
+function FoodSelect({ store, group, value, onSelect, label, filling = false, yogurt = false }) {
+  const [list,setList]=useState([]),[loading,setLoading]=useState(true),[error,setError]=useState(''),[retry,setRetry]=useState(0),[query,setQuery]=useState(''),[open,setOpen]=useState(false),[active,setActive]=useState(0);
+  const root=useRef(null),trigger=useRef(null),search=useRef(null),optionRefs=useRef([]),id=useId();
+  const close=(restore=false)=>{setOpen(false);setQuery('');setActive(0);if(restore)trigger.current?.focus();};
+  useEffect(()=>{const outside=e=>{if(root.current&&!root.current.contains(e.target)){setOpen(false);setQuery('');setActive(0);}};document.addEventListener('pointerdown',outside);return()=>document.removeEventListener('pointerdown',outside);},[]);
+  useEffect(()=>{if(open)search.current?.focus();},[open]);
+  useEffect(()=>{if(open)optionRefs.current[active]?.scrollIntoView?.({block:'nearest'});},[active,open]);
+  useEffect(()=>{
+    let alive=true;setLoading(true);setError('');
+    const load=group==='proteina'||filling?Promise.all([store.group('proteina'),store.group('lacteos')]).then(rows=>[...new Map(rows.flat().map(f=>[f.id,f])).values()]):store.group(group);
+    load.then(rows=>{if(alive){setList(rows);setLoading(false);}}).catch(()=>{if(alive){setError('No se pudo cargar la lista.');setLoading(false);}});
+    return()=>{alive=false;};
+  },[store,group,filling,retry]);
+  const allowed=list.filter(f=>!isBreakfastOnly(f)&&(!yogurt||YOGURTS.includes(f.id))&&(!filling||BREAD_FILLINGS.includes(f.id)));
+  const matches=allowed.filter(f=>normalizeSearch(f.nombre).includes(normalizeSearch(query)));
+  const selected=allowed.find(f=>f.id===value)||store.foods[value];
+  const pick=food=>{onSelect(food);close(true);};
+  const keyDown=e=>{
+    if(e.key==='Escape'){e.preventDefault();e.stopPropagation();close(true);}
+    else if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();setActive(n=>matches.length?(n+(e.key==='ArrowDown'?1:-1)+matches.length)%matches.length:0);}
+    else if(e.key==='Enter'&&matches[active]){e.preventDefault();pick(matches[active]);}
+  };
+  return <div className="food-select food-picker" ref={root} onBlur={e=>{if(e.relatedTarget&&!e.currentTarget.contains(e.relatedTarget))close();}}>
+    <span className="food-picker-label" id={`${id}-label`}>{label}</span>
+    <button type="button" ref={trigger} className={`food-picker-trigger${selected?' has-value':''}`} aria-labelledby={`${id}-label ${id}-value`} aria-haspopup="listbox" aria-expanded={open} aria-controls={open?`${id}-list`:undefined} onClick={()=>{if(open)close();else{setOpen(true);setActive(Math.max(0,allowed.findIndex(f=>f.id===value)));}}} onKeyDown={e=>{if(e.key==='ArrowDown'||e.key==='ArrowUp'){e.preventDefault();setOpen(true);setActive(e.key==='ArrowUp'?Math.max(0,allowed.length-1):0);}else if(e.key==='Escape')close(true);}}>
+      <span className={`food-picker-symbol food-picker-${group}`} aria-hidden="true"><Icon name={group==='fruta'?'sun':group==='lacteos'?'cup':'plate'}/></span>
+      <span id={`${id}-value`} className="food-picker-value">{selected?selected.nombre:`Elegir ${label.toLowerCase()}`}</span>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden="true"><path d="m7 10 5 5 5-5"/></svg>
+    </button>
+    {open&&<div className="food-picker-panel"><div className="food-picker-search"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><input ref={search} role="combobox" aria-label={`Buscar ${label.toLowerCase()}`} aria-autocomplete="list" aria-expanded="true" aria-controls={`${id}-list`} aria-activedescendant={matches[active]&&!loading&&!error?`${id}-option-${matches[active].id}`:undefined} placeholder="¿Qué te apetece?" autoComplete="off" value={query} onChange={e=>{setQuery(e.target.value);setActive(0);}} onKeyDown={keyDown}/>{query&&<button type="button" aria-label="Limpiar búsqueda" onClick={()=>{setQuery('');setActive(0);search.current?.focus();}}>×</button>}<button type="button" className="food-picker-close" aria-label="Cerrar lista" onClick={()=>close(true)}>Cerrar</button></div>
+      <div className="food-picker-caption"><span role="status">{loading?'Cargando tu lista…':error?'Lista no disponible':`${matches.length} ${matches.length===1?'alimento':'alimentos'}`}</span><span>Por 100 g / ml</span></div>
+      <div role="listbox" id={`${id}-list`} aria-labelledby={`${id}-label`} aria-busy={loading} className="food-picker-options">{!loading&&!error&&matches.map((food,index)=><div role="option" id={`${id}-option-${food.id}`} key={food.id} ref={el=>{optionRefs.current[index]=el;}} data-food-id={food.id} aria-selected={food.id===value} className={`food-picker-option${active===index?' is-active':''}`} onPointerDown={e=>e.preventDefault()} onPointerMove={()=>setActive(index)} onClick={()=>pick(food)}><span className="food-picker-option-copy"><strong>{food.nombre}</strong><small>{food.base_peso||food.estado_referencia} · {fmt(value100(food,'proteinas'))} g proteína</small></span><span className="food-picker-option-energy">{fmt(value100(food,'kcal'))}<small>kcal</small></span><span className="food-picker-check" aria-hidden="true">{food.id===value?'✓':'+'}</span></div>)}</div>
+      {loading&&<p className="food-picker-empty" role="status">Preparando tus alimentos…</p>}{error&&<div className="food-picker-empty" role="alert"><p>{error}</p><button type="button" className="soft-button" onClick={()=>setRetry(n=>n+1)}>Reintentar</button></div>}{!loading&&!error&&!matches.length&&<div className="food-picker-empty"><strong>No encontramos ese alimento.</strong><button type="button" className="text-button" onClick={()=>{setQuery('');setActive(0);search.current?.focus();}}>Ver toda la lista</button></div>}
+    </div>}
+  </div>;
+}
+function IngredientRows({ plan, meal, store, change, act, allowRemove = false }) {
+  return <div className="ingredient-list">{plan.meals[meal].map(item => {
+    const food = ingredientFood(item, store.foods), nutrients = sum([item], store.foods);
+    const unitGrams = item.unitGrams || food.gramos_unidad_inicial;
+    return <div className="ingredient" key={item.key}><div><strong>{food.nombre}</strong><small>{food.marca_referencia?`${food.marca_referencia} · `:''}{food.base_peso || food.estado_referencia} · {fmt(nutrients.kcal)} kcal · P {fmt(nutrients.proteinas)} · C {fmt(nutrients.carbohidratos)} · G {fmt(nutrients.grasas)} g</small></div>{item.role==='yogurt'&&['Desayuno','Merienda'].includes(meal)?<span className="yogurt-unit">1 yogur <small>{YOGURT_GRAMS} g</small></span>:<Quantity value={item.amount} suffix={unit(food)} label={`Cantidad de ${food.nombre} en ${unit(food)}`} onChange={amount => act(() => change(p => updateAmount(p, meal, item.key, amount, store.foods)))}/>} {allowRemove && <button className="remove-ingredient" aria-label={`Quitar ${food.nombre}`} onClick={() => act(() => change(p => ({...p, meals: {...p.meals, [meal]: p.meals[meal].filter(i=>i.key!==item.key)}})))}>×</button>}
+      {unitGrams && <div className="ingredient-units"><label>{food.id==='food_070'?'Rebanadas':'Unidades de huevo'}<Quantity value={item.amount/unitGrams} suffix="ud" label={`Unidades de ${food.nombre}`} onChange={n=>act(()=>change(p=>updateAmount(p,meal,item.key,n*unitGrams,store.foods)))}/></label><label>{food.id==='food_070'?'Peso por rebanada':'Peso comestible por huevo'}<Quantity value={unitGrams} suffix="g/ud" max={1000} label={`Peso por unidad de ${food.nombre}`} onChange={n=>act(()=>change(p=>setUnitWeight(p,meal,item.key,n,store.foods)))}/></label></div>}
+    </div>;
+  })}</div>;
+}
+function SmallMeal({ meal, plan, store, change, act }) {
+  const choice = plan.choices[meal], breakfast = meal === 'Desayuno', selected = plan.recipeChoices[meal] || {};
+  return <>
+    <div className="recipe-options" role="group" aria-label={`Opciones de ${meal.toLowerCase()}`}>
+      {breakfast && <button aria-pressed={choice === 'none'} className={choice === 'none' ? 'selected' : ''} onClick={() => act(() => change(p => preset(p, meal, 'none', store.foods)))}>Nada</button>}
+      {breakfast && <button aria-pressed={choice === 'coffee'} className={choice === 'coffee' ? 'selected' : ''} onClick={() => act(() => change(p => preset(p, meal, 'coffee', store.foods)))}>Solo café</button>}
+      <button aria-pressed={choice === 'A'} className={choice === 'A' ? 'selected' : ''} onClick={() => act(() => change(p => preset(p, meal, 'A', store.foods)))}><span className="recipe-letter">A</span> Pan con relleno</button>
+      <button aria-pressed={choice === 'B'} className={choice === 'B' ? 'selected' : ''} onClick={() => act(() => change(p => preset(p, meal, 'B', store.foods)))}><span className="recipe-letter">B</span> Yogur con fruta</button>
+    </div>
+    {choice === 'A' && <><FoodSelect store={store} group="proteina" filling label="Relleno del pan" value={selected.fillingId || RECIPE.filling} onSelect={food => act(() => change(p => preset(p, meal, 'A', store.foods, { fillingId: food.id })))}/></>}
+    {choice === 'B' && <><FoodSelect store={store} group="lacteos" yogurt label="Tipo de yogur" value={selected.yogurtId || RECIPE.yogurt} onSelect={food => act(() => change(p => preset(p, meal, 'B', store.foods, { yogurtId: food.id })))}/><FoodSelect store={store} group="fruta" label="Fruta del yogur" value={selected.fruitId || RECIPE.fruit} onSelect={food => act(() => change(p => preset(p, meal, 'B', store.foods, { fruitId: food.id })))}/></>}
+    {breakfast && ['A', 'B'].includes(choice) && <label className="check"><input type="checkbox" checked={!!selected.coffee} onChange={e => act(() => change(p => preset(p, meal, choice, store.foods, { coffee: e.target.checked })))}/> Añadir también mi café</label>}
+    {breakfast && (choice === 'coffee' || selected.coffee) && <div className="coffee-config"><label>Leche del café<select value={plan.preferences.milkId} onChange={e => act(() => change(p => updateCoffee(p, { milkId: e.target.value })))}><option value={RECIPE.whole}>Entera</option><option value={RECIPE.semi}>Semidesnatada</option></select></label></div>}
+    <IngredientRows {...{ plan, meal, store, change, act }}/>
+  </>;
+}
+function MainMeal({ meal, plan, store, change, act }) {
+  const [proteinGoal, setGoal] = useState(String(plan.proteinTargets?.[meal] ?? ''));
+  useEffect(() => { setGoal(String(plan.proteinTargets?.[meal] ?? '')); }, [plan.date, plan.proteinTargets?.[meal]]);
+  useEffect(()=>{if(meal==='Cena'&&plan.preferences.dinnerProteinMode==='remaining'&&!Number.isFinite(plan.proteinTargets.Cena)){const next=calculateDinnerRemainder(plan,store.foods);if(next!==plan)act(()=>change(next));}},[plan,meal,store,change]);
+  const items = plan.meals[meal], roles = ['protein', 'vegetable', ...(meal === 'Comida' ? ['carb'] : [])];
+  return <>
+    <div className="main-foods">{roles.map(role => <FoodSelect key={role} store={store} group={{ protein: 'proteina', vegetable: 'verdura', carb: 'carbohidrato' }[role]} label={roleNames[role]} value={items.find(i => i.role === role)?.id} onSelect={food => act(() => change(p => setSlot(p, meal, role, food, store.foods)))}/>)}</div>
+    {items.some(i => i.role === 'protein') && <form className="protein-target" onSubmit={e => { e.preventDefault(); act(() => change(p => meal==='Cena'&&proteinGoal.trim()===''?useRemainingDinnerProtein(p,store.foods):setProteinGoal(p, meal, Number(proteinGoal), store.foods))); }}><label>Proteína que quiero obtener en este plato<div><input type="number" inputMode="decimal" value={proteinGoal} onChange={e => {setGoal(e.target.value);if(meal==='Cena'&&e.target.value==='')act(()=>change(p=>useRemainingDinnerProtein(p,store.foods)));}} min="0.1" max="500" step="any" placeholder={meal==='Cena'?'Automático':'g de proteína'} required={meal!=='Cena'} aria-label={`Objetivo de proteína para ${meal.toLowerCase()}`}/><span>g</span></div></label><button type="submit" className="soft-button">{meal==='Cena'&&!proteinGoal?'Usar proteína restante':'Calcular ración'}</button></form>}
+    {meal==='Cena'&&plan.preferences.dinnerProteinMode==='remaining'&&<p className="dinner-auto-note" role="status">Proteína pendiente del día: {fmt(Math.max(0,plan.goals.proteinas-dayTotals(plan,store.foods).proteinas))} g.</p>}
+    <IngredientRows {...{ plan, meal, store, change, act }} allowRemove/>
+  </>;
+}
+function PlateGuide() {
+  return <details className="plate-guide"><summary><span><Icon name="plate"/> Tu plato de referencia</span><span aria-hidden="true">+</span></summary><div className="guide-grid">
+    <div><div className="plate lunch" role="img" aria-label="Comida: mitad verduras, un cuarto proteína y un cuarto carbohidrato"/><h3>Comida</h3><p>½ verduras · ¼ proteína · ¼ carbohidrato. Son proporciones visuales, no porcentajes exactos de peso o calorías.</p><p>200 g de verdura. Carne o pescado: 150–180 g crudos. Arroz integral: 70 g crudos de alimento; otras guarniciones se calculan por equivalencia de carbohidratos según su ficha.</p><p>Puedes indicar la proteína que quieres obtener del plato. Se descuenta la que aportan sus demás ingredientes.</p></div>
+    <div><div className="plate dinner" role="img" aria-label="Cena: verduras y proteína"/><h3>Cena</h3><p>Eliges tus alimentos: 200 g de verdura y una fuente proteica, sin guarnición automática de cereales ni tubérculos.</p><p>Si dejas vacío el objetivo de proteína, se calcula lo que falta para tu objetivo diario contando todo el día, hasta 180 g de producto. En carne y pescado crudos se mantiene la referencia mínima de 150 g. Si no alcanza, verás la proteína pendiente.</p><p>Si escribes un objetivo de proteína se utiliza ese valor. Si editas los gramos directamente se conserva tu cantidad. Otras fuentes proteicas no tienen una equivalencia de ración confirmada.</p></div>
+    <div className="guide-rules"><h3>Desayuno y merienda</h3><p>Desayuno opcional: nada, solo café, pan con proteína o yogur con chía y fruta. Merienda obligatoria: pan con proteína o yogur con chía y fruta. No hay media mañana.</p><p>Pan: referencia inicial de 50 g; el relleno se calcula para aportar la proteína de 100 g de cottage. Puedes cambiar el relleno y ajustar los gramos.</p><p>Yogur: un solo envase de 125 g por desayuno o merienda. Elige yogur griego natural Hacendado o yogur natural Hacendado. La chía empieza en 10 g y la fruta se calcula por la equivalencia provisional con 125 g de fresas. No se usa el peso del pack completo.</p><p><strong>Máximo dos raciones de fruta al día.</strong> {FRUIT_REFERENCE_NOTICE} Las cantidades editadas cuentan proporcionalmente.</p><h3>Café, cantidades y cálculos</h3><p>Café y leche solo en el desayuno. Vaso inicial de 200 ml: 150 ml de leche entera o semidesnatada y 50 ml de café solo, sin azúcar. Los dos ingredientes se suman por separado.</p><p>Todos los ingredientes aportan sus cuatro valores al total del plato y del día. Los objetivos son editables y orientativos; cambiar gramos recalcula los resultados. Los dibujos no son equivalencias nutricionales.</p><p>Se usa la ficha del catálogo: referencia Hacendado publicada cuando está documentada y valor estándar en los demás casos. Las fuentes y el estado de cada referencia se consultan en Alimentos. Los valores siguen pendientes de contraste con el envase actual cuando así consta en la ficha.</p><p>Huevo: unidades o gramos comestibles sin cáscara; peso inicial editable de 50 g por huevo. Pan de molde: gramos o rebanadas; peso inicial editable de 25 g por rebanada. Cambiar el peso por unidad conserva los gramos y recalcula las unidades. Atún: peso escurrido. Respeta el estado crudo, seco o cocido de la ficha.</p><p>La app muestra avisos ante excesos, déficits o raciones alejadas de referencia. No infla las raciones para forzar objetivos. El margen de aproximación del cálculo es 50 kcal, 5 g de proteína e hidratos y 3 g de grasa.</p><p>Puedes vaciar una comida con Borrar. En los selectores puedes buscar sin tildes, usar flechas y Enter, y cerrar con Escape o pulsando fuera.</p></div>
+  </div></details>;
+}
+function FoodBrowser({ bootstrap, store }) {
+  const [group,setGroup]=useState(''),[list,setList]=useState([]),[query,setQuery]=useState(''),[page,setPage]=useState(1),[error,setError]=useState(''),[loading,setLoading]=useState(false),[retry,setRetry]=useState(0);
+  const searching=!!normalizeSearch(query), browsing=!!group||searching;
+  useEffect(()=>{
+    if(!browsing){setList([]);setLoading(false);return;}
+    let active=true;setLoading(true);setList([]);setError('');
+    const timer=setTimeout(()=>{
+      const request=group?store.group(group):Promise.all(bootstrap.groups.map(g=>store.group(g.id))).then(rows=>[...new Map(rows.flat().map(f=>[f.id,f])).values()]);
+      request.then(rows=>{if(active){setList(rows);setLoading(false);}}).catch(()=>{if(active){setError('No se pudo cargar la lista.');setLoading(false);}});
+    },searching?180:0);
+    return()=>{active=false;clearTimeout(timer);};
+  },[group,browsing,searching,store,bootstrap.groups,retry]);
+  const filtered=list.filter(f=>normalizeSearch(f.nombre).includes(normalizeSearch(query))),pages=Math.max(1,Math.ceil(filtered.length/8));
+  const choose=id=>{setGroup(id);setPage(1);};
+  return <section className="catalog-panel"><div className="section-heading"><div><span className="eyebrow">TU CATÁLOGO</span><h2>Encuentra lo que te apetece.</h2></div><span className="catalog-count">{bootstrap.count} alimentos autorizados</span></div><SearchField value={query} onChange={text=>{setQuery(text);setPage(1);}} label="Buscar alimentos" placeholder={group?`Buscar en ${groupNames[group].toLowerCase()}…`:'Busca yogur, queso, fresas…'}/>
+    {!browsing?<div className="group-grid">{bootstrap.groups.map((g,i)=><button key={g.id} onClick={()=>choose(g.id)}><span className={`category-icon category-${g.id}`} aria-hidden="true"><Icon name={['plate','sun','cup','plus','sun','cup','plate'][i]}/></span><div><strong>{g.name}</strong><span>{g.count} alimentos</span></div><span className="category-arrow" aria-hidden="true">↗</span></button>)}</div>:<><div className="category-filters" role="group" aria-label="Filtrar alimentos por categoría"><button aria-pressed={!group} onClick={()=>choose('')}>Todos</button>{bootstrap.groups.map(g=><button key={g.id} aria-pressed={group===g.id} onClick={()=>choose(g.id)}>{g.name}</button>)}</div><div className="catalog-result-heading"><span role="status" aria-live="polite">{loading?'Buscando en tu lista…':error?'Búsqueda no disponible':`${filtered.length} ${filtered.length===1?'alimento':'alimentos'}${group?` en ${groupNames[group].toLowerCase()}`:''}`}</span><button className="text-button" onClick={()=>{choose('');setQuery('');}}>Ver categorías</button></div>
+    {loading?<div className="search-loading" role="status"><span/>Preparando tus alimentos…</div>:error?<div className="search-empty" role="alert"><p>{error}</p><button className="soft-button" onClick={()=>setRetry(n=>n+1)}>Reintentar</button></div>:<><div className="catalog-list">{filtered.slice((page-1)*8,page*8).map(food=><details key={food.id} className="food-detail"><summary><span><strong>{food.nombre}</strong><small>{food.base_peso||food.estado_referencia}{isBreakfastOnly(food)?' · Solo desayuno':''}</small></span><span className="food-energy">{fmt(value100(food,'kcal'))}<small>kcal / 100 {unit(food)}</small></span><span className="food-expand" aria-hidden="true">+</span></summary><div className="food-detail-body"><div className="food-macro-grid">{MACROS.filter(k=>k!=='kcal').map(k=><span key={k}><small>{macroNames[k]}</small><strong>{fmt(value100(food,k))} g</strong></span>)}</div><p>{food.fuente} {food.fuente_url&&<a href={food.fuente_url} target="_blank" rel="noreferrer">Consultar fuente</a>}</p>{value100(food,'fibra')!==undefined&&<p>Fibra: {fmt(value100(food,'fibra'))} g por 100 {unit(food)}.</p>}</div></details>)}</div>{!filtered.length&&<div className="search-empty"><Icon name="plate"/><h3>No encontramos ese alimento</h3><button className="soft-button" onClick={()=>{setQuery('');choose('');}}>Volver a las categorías</button></div>}{pages>1&&<div className="pagination"><button disabled={page===1} onClick={()=>setPage(n=>n-1)}>← Anterior</button><span>{page} de {pages}</span><button disabled={page===pages} onClick={()=>setPage(n=>n+1)}>Siguiente →</button></div>}</>}</>}
+  </section>;
+}
+export default function Planner({ bootstrap, client = supabase }) {
+  const store = useMemo(() => createFoodStore(bootstrap.foods, client, bootstrap.authorizedIds), [bootstrap, client]);
+  const state = usePlan(store, client), { plan, date, setDate, user, change } = state;
+  const [tab, setTab] = useState('plan'), [message, setMessage] = useState(''), [accountOpen, setAccountOpen] = useState(false), [email, setEmail] = useState(''), [authBusy, setAuthBusy] = useState(false), [showSticky, setShowSticky] = useState(false);
+  const timer = useRef(null), overviewRef = useRef(null);
+  const act = action => { try { action(); setMessage(''); } catch (error) { setMessage(error.message); } };
+  useEffect(() => () => clearTimeout(timer.current), []);
+  useEffect(() => {
+    if (!overviewRef.current || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver(([e]) => setShowSticky(!e.isIntersecting), { threshold: 0 });
+    observer.observe(overviewRef.current);
+    return () => observer.disconnect();
+  }, [!!plan]);
+  const announce = text => { setMessage(text); clearTimeout(timer.current); timer.current = setTimeout(() => setMessage(''), 8000); };
+  function eraseMeal(meal){act(()=>change(p=>clearMeal(p,meal)));}
+  function shiftDate(offset) { const d = new Date(date+'T12:00:00'); d.setDate(d.getDate()+offset); setDate(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`); }
+  async function signIn(event) {
+    event.preventDefault(); if (!client) return; setAuthBusy(true);
+    const { error } = await client.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
+    setAuthBusy(false); announce(error ? error.message : 'Revisa tu correo y abre el enlace para iniciar sesión en este dispositivo.');
+  }
+  async function importLocal() {
+    try {
+      let record = JSON.parse(localStorage.getItem(`mi-plato-v3:guest:${date}`) || 'null');
+      if (!record?.document) {
+        const legacy = JSON.parse(localStorage.getItem(`mi-plato:${date}`) || 'null');
+        if (!legacy) throw new Error('No hay un plan local para esta fecha.');
+        await store.ensure(Object.values(legacy).flat().filter(i=>i?.id).map(i=>i.id));
+        record = { document: migrateLegacy(legacy, date, store.foods) };
+      }
+      if (plan.updatedAt && !window.confirm('¿Sustituir el plan de tu cuenta de esta fecha por el plan local?')) return;
+      await store.ensure(MEALS.flatMap(m=>record.document.meals[m]||[]).map(i=>i.id)); change(validateDocument(record.document)); announce('Plan local preparado para guardar en tu cuenta.');
+    } catch(e) { setMessage(e.message); }
+  }
+  const totals = plan ? dayTotals(plan, store.foods) : null;
+  const reserve = plan ? budget(plan, store.foods, ['Desayuno','Comida','Merienda']) : null;
+  const warnings = plan ? validatePlan(plan, store.foods) : [];
+  const mealWarnings = meal => warnings.filter(w => w.startsWith(meal + ':'));
+  const generalWarnings = warnings.filter(w => !MEALS.some(m => w.startsWith(m + ':')));
+  return <div className="app-shell">{showSticky && totals && plan && <div className="sticky-stats" aria-hidden="true">{MACROS.map(k => <span key={k} className={totals[k] > plan.goals[k] ? 'over' : ''}><small>{macroNames[k]}</small>{fmt(totals[k])} {k === 'kcal' ? 'kcal' : 'g'}</span>)}</div>}<div className="topbar"><button className="brand" onClick={()=>setTab('plan')}><span aria-hidden="true">◒</span> mi plato.</button><nav aria-label="Navegación principal"><button className={tab==='plan'?'active':''} aria-current={tab==='plan'?'page':undefined} onClick={()=>setTab('plan')}>Mi día</button><button className={tab==='foods'?'active':''} aria-current={tab==='foods'?'page':undefined} onClick={()=>setTab('foods')}>Alimentos</button></nav><button className="account-button" onClick={()=>setAccountOpen(v=>!v)} aria-expanded={accountOpen}>{user ? 'Mi cuenta' : 'Guardar en mi cuenta'} <span aria-hidden="true">↗</span></button></div>
+    {accountOpen && <section className="account-panel"><h2>Tu plan, contigo.</h2>{!client ? <p>La sincronización entre dispositivos está preparada, pero falta conectar Supabase. Hasta entonces el guardado es solo local. Consulta la configuración en README.md.</p> : user ? <><p>Sesión iniciada como <strong>{user.email}</strong>. Usa esta misma cuenta en tus otros dispositivos.</p><div className="button-row"><button className="soft-button" onClick={importLocal}>Importar plan local de este día</button><button className="text-button" disabled={/Sincronizando|Guardando/.test(state.status)} onClick={async()=>{ const {error}=await client.auth.signOut();if(error)setMessage(error.message); }}>Cerrar sesión</button></div></> : <form onSubmit={signIn}><label>Tu correo<input type="email" autoComplete="email" required value={email} onChange={e=>setEmail(e.target.value)} placeholder="tu@correo.es"/></label><button className="primary-button" disabled={authBusy}>{authBusy?'Enviando…':'Recibir enlace de acceso'}</button><p>Inicia sesión en cada dispositivo con el mismo correo para recuperar tus comidas.</p></form>}</section>}
+    <main id="main"><header className="date-header"><div className="date-navigation" role="group" aria-label="Elegir día"><button aria-label="Día anterior" onClick={()=>shiftDate(-1)}>‹</button><input type="date" value={date} onChange={e=>e.target.value&&setDate(e.target.value)} aria-label="Fecha del plan"/><button aria-label="Día siguiente" onClick={()=>shiftDate(1)}>›</button><button className="today" onClick={()=>setDate(localDate())}>Hoy</button></div></header>
+      <div className="save-line" role="status"><span className={user?'status-dot cloud':'status-dot'}/>{state.status}{!user && <span> · Sin sincronización entre dispositivos</span>}</div>
+      {state.error && <div className="notice error" role="alert"><p>{state.error}</p><button onClick={state.conflict?state.discardLocal:state.retry}>{state.conflict?'Cargar versión de mi cuenta':'Reintentar'}</button></div>}
+      {message && <div className="notice" role="status">{message}<button className="icon-button" aria-label="Cerrar aviso" onClick={()=>setMessage('')}>×</button></div>}
+      {tab==='foods' ? <FoodBrowser bootstrap={bootstrap} store={store}/> : !plan ? <p className="loading">{state.error?'El plan no está disponible hasta resolver la conexión.':'Preparando tu día…'}</p> : <>
+        <div className="daily-heading"><span className="eyebrow">RESUMEN DIARIO</span><h2>Tu día, de un vistazo.</h2></div><section className="overview" ref={overviewRef} aria-label="Totales nutricionales en tiempo real">{MACROS.map((key,index)=><div className={`stat ${index===0?'energy':''} ${totals[key]>plan.goals[key]?'over':''}`} key={key}><span>{macroNames[key]}</span><strong>{fmt(totals[key])}<small>{key==='kcal'?'kcal':'g'}</small></strong><div className="bar" aria-hidden="true"><span style={{width:`${Math.min(100,totals[key]/plan.goals[key]*100)}%`}}/></div><small>de {fmt(plan.goals[key])} {key==='kcal'?'kcal':'g'} orientativos</small></div>)}</section>
+        <details className="goals"><summary>Editar objetivos del día</summary><div>{MACROS.map(key=><label key={key}>{macroNames[key]}<Quantity value={plan.goals[key]} suffix={key==='kcal'?'kcal':'g'} label={`Objetivo diario de ${macroNames[key].toLowerCase()}`} onChange={value=>act(()=>change(p=>({...p,goals:{...p.goals,[key]:value}})))}/></label>)}</div></details>
+        <div className="section-heading"><h1>Tus comidas</h1></div><section className="meal-sheet" aria-label="Plan de comidas">{MEALS.map((meal,index)=><article className={`meal meal-${index}`} key={meal}><header className="meal-head"><span className="meal-icon"><Icon name={['sun','plate','cup','moon'][index]}/></span><div><h2>{meal}</h2><small>{meal==='Merienda'?'Obligatoria':meal==='Comida'?'Verduras + proteína + carbohidrato':meal==='Cena'?'Verduras + proteína':'A tu manera'}</small><span className="meal-kcal">{fmt(sum(plan.meals[meal],store.foods).kcal)} kcal</span><span className="meal-macros">P {fmt(sum(plan.meals[meal],store.foods).proteinas)} · C {fmt(sum(plan.meals[meal],store.foods).carbohidratos)} · G {fmt(sum(plan.meals[meal],store.foods).grasas)} g</span></div><button type="button" className="clear-meal-button" aria-label={`Borrar ${meal.toLowerCase()}`} title={`Vaciar ${meal.toLowerCase()}`} disabled={!plan.meals[meal].length} onClick={()=>eraseMeal(meal)}><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7m4-7v7"/></svg><span>Borrar</span></button></header><div className="meal-body">{meal==='Comida'?<MainMeal {...{meal,plan,store,change,act}}/>:meal==='Cena'?<><div className="cena-budget" aria-label="Disponible para la cena">{MACROS.map(k=><span key={k} className={reserve.remaining[k]<0?'negative':''}><small>{macroNames[k]}</small><strong>{fmt(reserve.remaining[k])} {k==='kcal'?'kcal':'g'}</strong></span>)}</div><MainMeal {...{meal,plan,store,change,act}}/></>:<SmallMeal {...{meal,plan,store,change,act}}/>}</div>{mealWarnings(meal).length>0&&<ul className="meal-warnings-inline">{mealWarnings(meal).map((w,i)=><li key={i}>{w.slice(meal.length+2)}</li>)}</ul>}</article>)}</section>
+        {generalWarnings.length>0&&<section className="warnings" aria-label="Avisos nutricionales"><h2>Para revisar</h2><ul>{generalWarnings.map((text,index)=><li key={index}>{text}</li>)}</ul></section>}
+        <PlateGuide/>
+      </>}
+      <footer><span>Mi plato · A tu ritmo.</span><span>{user?'Plan vinculado a tu cuenta':'Respaldo local en este navegador'}</span></footer>
+    </main></div>;
+}

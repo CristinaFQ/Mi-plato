@@ -1,0 +1,11 @@
+---
+import Planner from '../components/Planner.jsx';
+import { bootstrap } from '../lib/catalog.js';
+import '../styles/planner.css';
+import '../styles/visual.css';
+---
+<!doctype html>
+<html lang="es">
+<head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width, initial-scale=1"/><meta name="theme-color" content="#f5f5ef"/><title>Mi plato</title><meta name="description" content="Tu plan nutricional, ingrediente a ingrediente."/></head>
+<body><a class="skip-link" href="#main">Ir al contenido</a><Planner bootstrap={bootstrap} client:only="react"><p slot="fallback" class="loading">Preparando tu plan…</p></Planner><noscript>Activa JavaScript para utilizar el planificador.</noscript></body>
+</html>

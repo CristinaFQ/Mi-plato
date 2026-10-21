@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f8f7f3">
+  <meta name="description" content="Tu día de comidas, con los alimentos de tu nutricionista.">
+  <title>Mi plato · Tu día, a tu ritmo</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Ir al contenido</a>
+  <div class="app-shell">
+    <div class="topbar">
+      <a class="brand" href="#" aria-label="Mi plato, inicio"><span class="brand-mark" aria-hidden="true">◒</span>mi plato<span class="brand-dot">.</span></a>
+      <nav aria-label="Navegación principal">
+        <button class="nav active" data-view="plan" aria-current="page">Mi día</button>
+        <button class="nav" data-view="catalog">Alimentos</button>
+      </nav>
+      <span class="local-label"><span aria-hidden="true"></span>Tu espacio personal</span>
+    </div>
+    <main id="main" tabindex="-1">
+      <header class="page-header">
+        <div class="date-navigation" role="group" aria-label="Elegir día">
+          <button id="previous-day" class="icon-button" aria-label="Día anterior">‹</button>
+          <label class="date-control"><span>Tu día</span><input id="date" type="date" aria-label="Fecha del plan"></label>
+          <button id="next-day" class="icon-button" aria-label="Día siguiente">›</button>
+          <button id="today" class="today-button">Hoy</button>
+        </div>
+      </header>
+      <div id="content" aria-busy="true"><p class="loading">Preparando tu día…</p></div>
+      <footer><span>Mi plato · A tu ritmo.</span><span>Datos guardados solo en este navegador.</span></footer>
+    </main>
+  </div>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

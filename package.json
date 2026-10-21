@@ -1,0 +1,29 @@
+{
+  "name": "mi-plato",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev --host 127.0.0.1 --port 5173",
+    "build": "astro build",
+    "preview": "astro preview --host 127.0.0.1 --port 5173",
+    "check": "astro check",
+    "test": "node --test tests/*.test.mjs && python3 -m unittest discover -s tests -p \"test_*.py\"",
+    "seed:sql": "node scripts/generate-seed.mjs",
+    "dev:legacy": "python3 server.py --legacy"
+  },
+  "dependencies": {
+    "@astrojs/react": "4.4.2",
+    "@supabase/supabase-js": "2.118.0",
+    "astro": "5.18.2",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.10",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "domino": "^2.1.7",
+    "esbuild": "^0.27.7",
+    "typescript": "5.9.3"
+  }
+}
