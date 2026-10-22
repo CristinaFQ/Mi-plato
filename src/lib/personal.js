@@ -6,7 +6,7 @@ export function cloudError(error) {
     : error?.code === '28000' ? 'La llave personal no es válida. Vuelve a conectar este dispositivo.'
     : ['PGRST202','PGRST205','42P01','42883','42501'].includes(error?.code) ? 'Falta activar el espacio personal en Supabase. Tus comidas siguen guardadas aquí.'
     : error?.code === '22023' ? 'Supabase no acepta este plan. Comprueba que el catálogo y la migración estén actualizados.'
-    : 'No se pudo sincronizar. Tus comidas siguen guardadas en este dispositivo.');
+    : `No se pudo sincronizar. Tus comidas siguen guardadas en este dispositivo. (Detalle: ${[error?.code,error?.message].filter(Boolean).join(' · ')||'sin respuesta del servidor'})`);
   e.conflict = error?.code === '40001'; e.accessDenied = error?.code === '28000';
   e.code = error?.code; return e;
 }
