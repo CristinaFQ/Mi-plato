@@ -27,7 +27,17 @@ PUBLIC_SUPABASE_URL=https://TU_PROYECTO.supabase.co
 PUBLIC_SUPABASE_ANON_KEY=sb_publishable_TU_CLAVE_PUBLICA
 ```
 
-Reinicia `npm run dev`. Para una web publicada, configura esas mismas variables en el alojamiento y vuelve a desplegar. No uses una clave secret/service_role en el frontend.
+Reinicia `npm run dev`. No uses una clave secret/service_role en el frontend.
+
+### Publicar en GitHub Pages
+
+El repositorio incluye `.github/workflows/deploy.yml`, que compila y publica la web en cada push a `main`.
+
+1. En GitHub → **Settings → Pages → Build and deployment**, elige **Source: GitHub Actions**.
+2. En **Settings → Secrets and variables → Actions → Variables**, crea dos variables de repositorio con los mismos valores del `.env`: `PUBLIC_SUPABASE_URL` y `PUBLIC_SUPABASE_ANON_KEY`. Son valores públicos (acaban dentro del JavaScript publicado). La llave personal **no** se pone aquí.
+3. Haz push a `main` (o lanza el workflow a mano desde **Actions**). La web queda en `https://cristinafq.github.io/Mi-plato/`.
+
+La ruta base `/Mi-plato/` la calcula el workflow automáticamente; en local la app sigue sirviéndose desde `/`.
 
 ## 3. Conectar tus dispositivos
 

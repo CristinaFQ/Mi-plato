@@ -1,3 +1,5 @@
+// GitHub Pages serves the app under /<repo>/, so static catalog files follow Astro's base path.
+const BASE = (import.meta.env?.BASE_URL || '/').replace(/\/?$/, '/');
 export function createFoodStore(initial, client, authorizedIds) {
   const allowed = new Set(authorizedIds || initial.map(f => f.id));
   const foods = Object.fromEntries(initial.map(f => [f.id, f])), requests = new Map();
@@ -7,7 +9,7 @@ export function createFoodStore(initial, client, authorizedIds) {
     if (!allowed.has(id) || !/^food_\d{3}$/.test(id)) throw new Error('Alimento no autorizado.');
     if (!requests.has(id)) requests.set(id, (async () => {
       if (client) { const { data, error } = await client.from('nutrition_foods').select('payload').eq('id', id).maybeSingle(); if (!error && data) return remember([data.payload])[0]; }
-      const response = await fetch(`/catalog/food/${id}.json`);
+      const response = await fetch(`${BASE}catalog/food/${id}.json`);
       if (!response.ok) throw new Error('No se encuentra un alimento del plan en el catálogo autorizado.');
       return remember([await response.json()])[0];
     })().finally(() => requests.delete(id)));
@@ -17,7 +19,7 @@ export function createFoodStore(initial, client, authorizedIds) {
     const requestKey = `group:${id}`;
     if (!requests.has(requestKey)) requests.set(requestKey, (async () => {
       if (client) { const { data, error } = await client.from('nutrition_foods').select('payload').eq('food_group', id).order('name'); if (!error && data?.length) return remember(data.map(r => r.payload)); }
-      const response = await fetch(`/catalog/group/${encodeURIComponent(id)}.json`);
+      const response = await fetch(`${BASE}catalog/group/${encodeURIComponent(id)}.json`);
       if (!response.ok) throw new Error('No se ha podido consultar este grupo.');
       return remember(await response.json());
     })().finally(() => requests.delete(requestKey)));

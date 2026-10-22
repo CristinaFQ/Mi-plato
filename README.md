@@ -20,7 +20,7 @@ npm run build
 npm run preview
 ```
 
-La salida de producción está en `build/`. `python3 server.py` sirve esta misma versión compilada desde `build/` y exige ejecutar antes `npm run build`. La interfaz antigua de `dist/` solo se abre expresamente con `npm run dev:legacy` para diagnóstico.
+La salida de producción está en `build/`. Se publica sola en GitHub Pages con cada push a `main` (ver [la guía](docs/SUPABASE_PERSONAL.md#publicar-en-github-pages)). `python3 server.py` sirve esta misma versión compilada desde `build/` y exige ejecutar antes `npm run build`. La interfaz antigua de `dist/` solo se abre expresamente con `npm run dev:legacy` para diagnóstico.
 
 ## Activar Supabase y persistencia entre dispositivos
 
