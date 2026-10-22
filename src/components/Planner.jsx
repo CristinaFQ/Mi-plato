@@ -126,11 +126,13 @@ export default function Planner({ bootstrap, client = supabase }) {
   const act = action => { try { action(); setMessage(''); } catch (error) { setMessage(error.message); } };
   useEffect(() => () => clearTimeout(timer.current), []);
   useEffect(() => {
-    if (!overviewRef.current || typeof IntersectionObserver === 'undefined') return;
-    const observer = new IntersectionObserver(([e]) => setShowSticky(!e.isIntersecting), { threshold: 0 });
+    setShowSticky(false);
+    if (tab !== 'plan' || !overviewRef.current || typeof IntersectionObserver === 'undefined') return;
+    // Only once the overview has scrolled above the viewport; otherwise the banner covers the top navigation.
+    const observer = new IntersectionObserver(([e]) => setShowSticky(!e.isIntersecting && e.boundingClientRect.top < 0), { threshold: 0 });
     observer.observe(overviewRef.current);
     return () => observer.disconnect();
-  }, [!!plan]);
+  }, [!!plan, tab]);
   const announce = text => { setMessage(text); clearTimeout(timer.current); timer.current = setTimeout(() => setMessage(''), 8000); };
   function eraseMeal(meal){act(()=>change(p=>clearMeal(p,meal)));}
   function shiftDate(offset) { const d = new Date(date+'T12:00:00'); d.setDate(d.getDate()+offset); setDate(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`); }
@@ -140,7 +142,7 @@ export default function Planner({ bootstrap, client = supabase }) {
   const warnings = plan ? validatePlan(plan, store.foods) : [];
   const mealWarnings = meal => warnings.filter(w => w.startsWith(meal + ':'));
   const generalWarnings = warnings.filter(w => !MEALS.some(m => w.startsWith(m + ':')));
-  return <div className="app-shell">{showSticky && totals && plan && <div className="sticky-stats" aria-hidden="true">{MACROS.map(k => <span key={k} className={totals[k] > plan.goals[k] ? 'over' : ''}><small>{macroNames[k]}</small>{fmt(totals[k])} {k === 'kcal' ? 'kcal' : 'g'}</span>)}</div>}<div className="topbar"><button className="brand" onClick={()=>setTab('plan')}><span aria-hidden="true">◒</span> mi plato.</button><nav aria-label="Navegación principal"><button className={tab==='plan'?'active':''} aria-current={tab==='plan'?'page':undefined} onClick={()=>setTab('plan')}>Mi día</button><button className={tab==='foods'?'active':''} aria-current={tab==='foods'?'page':undefined} onClick={()=>setTab('foods')}>Alimentos</button></nav><button className="account-button" onClick={()=>setAccountOpen(v=>!v)} aria-expanded={accountOpen}>{connected ? 'Mis dispositivos' : 'Conectar dispositivos'} <span aria-hidden="true">↗</span></button></div>
+  return <div className="app-shell">{tab === 'plan' && showSticky && totals && plan && <div className="sticky-stats" aria-hidden="true">{MACROS.map(k => <span key={k} className={totals[k] > plan.goals[k] ? 'over' : ''}><small>{macroNames[k]}</small>{fmt(totals[k])} {k === 'kcal' ? 'kcal' : 'g'}</span>)}</div>}<div className="topbar"><button className="brand" onClick={()=>setTab('plan')}><span aria-hidden="true">◒</span> mi plato.</button><nav aria-label="Navegación principal"><button className={tab==='plan'?'active':''} aria-current={tab==='plan'?'page':undefined} onClick={()=>setTab('plan')}>Mi día</button><button className={tab==='foods'?'active':''} aria-current={tab==='foods'?'page':undefined} onClick={()=>setTab('foods')}>Alimentos</button></nav><button className="account-button" onClick={()=>setAccountOpen(v=>!v)} aria-expanded={accountOpen}>{connected ? 'Mis dispositivos' : 'Conectar dispositivos'} <span aria-hidden="true">↗</span></button></div>
     {accountOpen && <section className="account-panel personal-access"><div><span className="eyebrow">SOLO PARA TI</span><h2>Tu espacio personal.</h2></div>{!client?<p>Las comidas se guardan en este dispositivo. La conexión entre dispositivos todavía no está configurada.</p>:connected?<><p>La llave está guardada en este dispositivo.</p><button className="text-button" onClick={state.disconnect}>Desconectar este dispositivo</button></>:<form onSubmit={unlock}><label>Llave personal<input type="password" autoComplete="current-password" name="personal_access_key" value={personalKey} onChange={e=>setPersonalKey(e.target.value)} required minLength={64} maxLength={64} placeholder="Pega tu llave personal"/></label><button className="primary-button" disabled={state.connecting}>{state.connecting?'Conectando…':'Conectar'}</button><p>Una vez por dispositivo. Sin registro, correo ni enlaces de acceso.</p></form>}</section>}
     <main id="main"><header className="date-header"><div className="date-navigation" role="group" aria-label="Elegir día"><button aria-label="Día anterior" onClick={()=>shiftDate(-1)}>‹</button><input type="date" value={date} onChange={e=>e.target.value&&setDate(e.target.value)} aria-label="Fecha del plan"/><button aria-label="Día siguiente" onClick={()=>shiftDate(1)}>›</button><button className="today" onClick={()=>setDate(localDate())}>Hoy</button></div></header>
       <div className="save-line" role="status"><span className={connected?'status-dot cloud':'status-dot'}/>{state.status}</div>

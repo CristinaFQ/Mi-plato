@@ -134,7 +134,7 @@ td, td:first-child { font-size: 13px; }
 .account-panel { border-radius: 20px; box-shadow: var(--shadow); padding: 26px; }
 .account-panel p { font-size: 13px; }
 .account-panel label { font-size: 12px; }
-.sticky-stats { top: 12px; left: 50%; right: auto; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); padding: 13px 22px; border-radius: 18px; gap: 24px; box-shadow: 0 6px 25px #233e3528; background: #375b43; }
+.sticky-stats { top: 12px; left: 50%; right: auto; transform: translateX(-50%); width: max-content; max-width: calc(100% - 24px); padding: 13px 22px; border-radius: 18px; gap: 24px; box-shadow: 0 6px 25px #233e3528; background: #375b43; pointer-events: none; }
 .sticky-stats small { font-size: 10px; color: #e1ead9; }
 footer { font-size: 11px; padding: 30px 3px 36px; }
 @media (max-width: 900px) {
