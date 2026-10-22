@@ -1,8 +1,8 @@
 import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { supabase } from '../lib/supabase.js';
 import { createFoodStore } from '../lib/repository.js';
-import { usePlan, localDate } from '../lib/usePlan.js';
-import { MACROS, MEALS, RECIPE, BREAD_FILLINGS, YOGURTS, YOGURT_GRAMS, FRUIT_REFERENCE_NOTICE, ingredientFood, clearMeal, calculateDinnerRemainder, useRemainingDinnerProtein, setUnitWeight, budget, dayTotals, preset, updateCoffee, updateAmount, setSlot, setProteinGoal, validatePlan, unit, value100, sum, isBreakfastOnly, validateDocument, migrateLegacy } from '../lib/engine.js';
+import { usePersonalPlan, localDate } from '../lib/usePersonalPlan.js';
+import { MACROS, MEALS, RECIPE, BREAD_FILLINGS, YOGURTS, YOGURT_GRAMS, FRUIT_REFERENCE_NOTICE, ingredientFood, clearMeal, calculateDinnerRemainder, useRemainingDinnerProtein, setUnitWeight, budget, dayTotals, preset, updateCoffee, updateAmount, setSlot, setProteinGoal, validatePlan, unit, value100, sum, isBreakfastOnly } from '../lib/engine.js';
 const fmt = n => Number.isFinite(n) ? new Intl.NumberFormat('es-ES', { maximumFractionDigits: 1 }).format(n) : '—';
 const macroNames = { kcal: 'Energía', proteinas: 'Proteínas', carbohidratos: 'Carbohidratos', grasas: 'Grasas' };
 const groupNames = { proteina: 'Proteínas', verdura: 'Verduras', carbohidrato: 'Carbohidratos', grasa: 'Frutos secos y semillas', fruta: 'Frutas', lacteos: 'Lácteos', otros: 'Otros autorizados' };
@@ -120,8 +120,8 @@ function FoodBrowser({ bootstrap, store }) {
 }
 export default function Planner({ bootstrap, client = supabase }) {
   const store = useMemo(() => createFoodStore(bootstrap.foods, client, bootstrap.authorizedIds), [bootstrap, client]);
-  const state = usePlan(store, client), { plan, date, setDate, user, change } = state;
-  const [tab, setTab] = useState('plan'), [message, setMessage] = useState(''), [accountOpen, setAccountOpen] = useState(false), [email, setEmail] = useState(''), [authBusy, setAuthBusy] = useState(false), [showSticky, setShowSticky] = useState(false);
+  const state = usePersonalPlan(store, client), { plan, date, setDate, change, connected } = state;
+  const [tab, setTab] = useState('plan'), [message, setMessage] = useState(''), [accountOpen, setAccountOpen] = useState(false), [personalKey, setPersonalKey] = useState(''), [showSticky, setShowSticky] = useState(false);
   const timer = useRef(null), overviewRef = useRef(null);
   const act = action => { try { action(); setMessage(''); } catch (error) { setMessage(error.message); } };
   useEffect(() => () => clearTimeout(timer.current), []);
@@ -134,34 +134,17 @@ export default function Planner({ bootstrap, client = supabase }) {
   const announce = text => { setMessage(text); clearTimeout(timer.current); timer.current = setTimeout(() => setMessage(''), 8000); };
   function eraseMeal(meal){act(()=>change(p=>clearMeal(p,meal)));}
   function shiftDate(offset) { const d = new Date(date+'T12:00:00'); d.setDate(d.getDate()+offset); setDate(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`); }
-  async function signIn(event) {
-    event.preventDefault(); if (!client) return; setAuthBusy(true);
-    const { error } = await client.auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin } });
-    setAuthBusy(false); announce(error ? error.message : 'Revisa tu correo y abre el enlace para iniciar sesión en este dispositivo.');
-  }
-  async function importLocal() {
-    try {
-      let record = JSON.parse(localStorage.getItem(`mi-plato-v3:guest:${date}`) || 'null');
-      if (!record?.document) {
-        const legacy = JSON.parse(localStorage.getItem(`mi-plato:${date}`) || 'null');
-        if (!legacy) throw new Error('No hay un plan local para esta fecha.');
-        await store.ensure(Object.values(legacy).flat().filter(i=>i?.id).map(i=>i.id));
-        record = { document: migrateLegacy(legacy, date, store.foods) };
-      }
-      if (plan.updatedAt && !window.confirm('¿Sustituir el plan de tu cuenta de esta fecha por el plan local?')) return;
-      await store.ensure(MEALS.flatMap(m=>record.document.meals[m]||[]).map(i=>i.id)); change(validateDocument(record.document)); announce('Plan local preparado para guardar en tu cuenta.');
-    } catch(e) { setMessage(e.message); }
-  }
+  async function unlock(event){event.preventDefault();if(await state.connect(personalKey)){setPersonalKey('');setAccountOpen(false);}}
   const totals = plan ? dayTotals(plan, store.foods) : null;
   const reserve = plan ? budget(plan, store.foods, ['Desayuno','Comida','Merienda']) : null;
   const warnings = plan ? validatePlan(plan, store.foods) : [];
   const mealWarnings = meal => warnings.filter(w => w.startsWith(meal + ':'));
   const generalWarnings = warnings.filter(w => !MEALS.some(m => w.startsWith(m + ':')));
-  return <div className="app-shell">{showSticky && totals && plan && <div className="sticky-stats" aria-hidden="true">{MACROS.map(k => <span key={k} className={totals[k] > plan.goals[k] ? 'over' : ''}><small>{macroNames[k]}</small>{fmt(totals[k])} {k === 'kcal' ? 'kcal' : 'g'}</span>)}</div>}<div className="topbar"><button className="brand" onClick={()=>setTab('plan')}><span aria-hidden="true">◒</span> mi plato.</button><nav aria-label="Navegación principal"><button className={tab==='plan'?'active':''} aria-current={tab==='plan'?'page':undefined} onClick={()=>setTab('plan')}>Mi día</button><button className={tab==='foods'?'active':''} aria-current={tab==='foods'?'page':undefined} onClick={()=>setTab('foods')}>Alimentos</button></nav><button className="account-button" onClick={()=>setAccountOpen(v=>!v)} aria-expanded={accountOpen}>{user ? 'Mi cuenta' : 'Guardar en mi cuenta'} <span aria-hidden="true">↗</span></button></div>
-    {accountOpen && <section className="account-panel"><h2>Tu plan, contigo.</h2>{!client ? <p>La sincronización entre dispositivos está preparada, pero falta conectar Supabase. Hasta entonces el guardado es solo local. Consulta la configuración en README.md.</p> : user ? <><p>Sesión iniciada como <strong>{user.email}</strong>. Usa esta misma cuenta en tus otros dispositivos.</p><div className="button-row"><button className="soft-button" onClick={importLocal}>Importar plan local de este día</button><button className="text-button" disabled={/Sincronizando|Guardando/.test(state.status)} onClick={async()=>{ const {error}=await client.auth.signOut();if(error)setMessage(error.message); }}>Cerrar sesión</button></div></> : <form onSubmit={signIn}><label>Tu correo<input type="email" autoComplete="email" required value={email} onChange={e=>setEmail(e.target.value)} placeholder="tu@correo.es"/></label><button className="primary-button" disabled={authBusy}>{authBusy?'Enviando…':'Recibir enlace de acceso'}</button><p>Inicia sesión en cada dispositivo con el mismo correo para recuperar tus comidas.</p></form>}</section>}
+  return <div className="app-shell">{showSticky && totals && plan && <div className="sticky-stats" aria-hidden="true">{MACROS.map(k => <span key={k} className={totals[k] > plan.goals[k] ? 'over' : ''}><small>{macroNames[k]}</small>{fmt(totals[k])} {k === 'kcal' ? 'kcal' : 'g'}</span>)}</div>}<div className="topbar"><button className="brand" onClick={()=>setTab('plan')}><span aria-hidden="true">◒</span> mi plato.</button><nav aria-label="Navegación principal"><button className={tab==='plan'?'active':''} aria-current={tab==='plan'?'page':undefined} onClick={()=>setTab('plan')}>Mi día</button><button className={tab==='foods'?'active':''} aria-current={tab==='foods'?'page':undefined} onClick={()=>setTab('foods')}>Alimentos</button></nav><button className="account-button" onClick={()=>setAccountOpen(v=>!v)} aria-expanded={accountOpen}>{connected ? 'Mis dispositivos' : 'Conectar dispositivos'} <span aria-hidden="true">↗</span></button></div>
+    {accountOpen && <section className="account-panel personal-access"><div><span className="eyebrow">SOLO PARA TI</span><h2>Tu espacio personal.</h2></div>{!client?<p>Las comidas se guardan en este dispositivo. La conexión entre dispositivos todavía no está configurada.</p>:connected?<><p>La llave está guardada en este dispositivo.</p><button className="text-button" onClick={state.disconnect}>Desconectar este dispositivo</button></>:<form onSubmit={unlock}><label>Llave personal<input type="password" autoComplete="current-password" name="personal_access_key" value={personalKey} onChange={e=>setPersonalKey(e.target.value)} required minLength={64} maxLength={64} placeholder="Pega tu llave personal"/></label><button className="primary-button" disabled={state.connecting}>{state.connecting?'Conectando…':'Conectar'}</button><p>Una vez por dispositivo. Sin registro, correo ni enlaces de acceso.</p></form>}</section>}
     <main id="main"><header className="date-header"><div className="date-navigation" role="group" aria-label="Elegir día"><button aria-label="Día anterior" onClick={()=>shiftDate(-1)}>‹</button><input type="date" value={date} onChange={e=>e.target.value&&setDate(e.target.value)} aria-label="Fecha del plan"/><button aria-label="Día siguiente" onClick={()=>shiftDate(1)}>›</button><button className="today" onClick={()=>setDate(localDate())}>Hoy</button></div></header>
-      <div className="save-line" role="status"><span className={user?'status-dot cloud':'status-dot'}/>{state.status}{!user && <span> · Sin sincronización entre dispositivos</span>}</div>
-      {state.error && <div className="notice error" role="alert"><p>{state.error}</p><button onClick={state.conflict?state.discardLocal:state.retry}>{state.conflict?'Cargar versión de mi cuenta':'Reintentar'}</button></div>}
+      <div className="save-line" role="status"><span className={connected?'status-dot cloud':'status-dot'}/>{state.status}</div>
+      {state.error && <div className="notice error" role="alert"><p>{state.error}</p>{state.conflict?<div className="button-row"><button className="soft-button" onClick={state.keepLocal}>Conservar lo de aquí</button><button className="text-button" onClick={state.discardLocal}>Cargar lo guardado</button></div>:<button onClick={state.retry}>Reintentar</button>}</div>}
       {message && <div className="notice" role="status">{message}<button className="icon-button" aria-label="Cerrar aviso" onClick={()=>setMessage('')}>×</button></div>}
       {tab==='foods' ? <FoodBrowser bootstrap={bootstrap} store={store}/> : !plan ? <p className="loading">{state.error?'El plan no está disponible hasta resolver la conexión.':'Preparando tu día…'}</p> : <>
         <div className="daily-heading"><span className="eyebrow">RESUMEN DIARIO</span><h2>Tu día, de un vistazo.</h2></div><section className="overview" ref={overviewRef} aria-label="Totales nutricionales en tiempo real">{MACROS.map((key,index)=><div className={`stat ${index===0?'energy':''} ${totals[key]>plan.goals[key]?'over':''}`} key={key}><span>{macroNames[key]}</span><strong>{fmt(totals[key])}<small>{key==='kcal'?'kcal':'g'}</small></strong><div className="bar" aria-hidden="true"><span style={{width:`${Math.min(100,totals[key]/plan.goals[key]*100)}%`}}/></div><small>de {fmt(plan.goals[key])} {key==='kcal'?'kcal':'g'} orientativos</small></div>)}</section>
@@ -170,6 +153,6 @@ export default function Planner({ bootstrap, client = supabase }) {
         {generalWarnings.length>0&&<section className="warnings" aria-label="Avisos nutricionales"><h2>Para revisar</h2><ul>{generalWarnings.map((text,index)=><li key={index}>{text}</li>)}</ul></section>}
         <PlateGuide/>
       </>}
-      <footer><span>Mi plato · A tu ritmo.</span><span>{user?'Plan vinculado a tu cuenta':'Respaldo local en este navegador'}</span></footer>
+      <footer><span>Mi plato · A tu ritmo.</span><span>{connected?'Tu espacio personal':'Guardado local automático'}</span></footer>
     </main></div>;
 }

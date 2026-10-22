@@ -1,6 +1,6 @@
 # Mi plato — Astro + React + Supabase
 
-Planificador personal con catálogo estricto, recetas A/B, café por ingredientes, cálculos reactivos, cena elegida por alimentos con proteína restante y guardado por cuenta y fecha.
+Planificador personal con catálogo estricto, recetas A/B, café por ingredientes, cálculos reactivos, cena elegida por alimentos con proteína restante y guardado personal por fecha.
 
 ## Arrancar
 
@@ -24,32 +24,17 @@ La salida de producción está en `build/`. `python3 server.py` sirve esta misma
 
 ## Activar Supabase y persistencia entre dispositivos
 
-La integración está preparada; en este entorno no se ha facilitado un proyecto ni su configuración y no se han ejecutado cambios remotos.
+La app es un espacio personal: no hay registro, correo ni enlaces de acceso. Se introduce una llave privada una vez por dispositivo. Las comidas se guardan localmente en cada edición y pasan automáticamente a Supabase al conectar.
 
-1. Usa un proyecto Supabase y ejecuta una vez `supabase/migrations/202610210001_planner.sql` en su editor SQL.
-2. Ejecuta también `supabase/migrations/202610210002_ingredient_labels.sql` por compatibilidad con pesos por unidad y planes anteriores. Después ejecuta `supabase/seed.sql` en el editor SQL. Solo importa los 145 alimentos autorizados. `npm run seed:sql` regenera este archivo desde el JSON.
-3. Copia `.env.example` a `.env` en la raíz del repositorio y completa:
+Sigue [la guía de activación del espacio personal](docs/SUPABASE_PERSONAL.md). Si ya configuraste la base de datos antigua, solo queda actualizar el seed, ejecutar la migración 003 y generar la llave desde SQL Editor. No se han ejecutado cambios remotos desde este entorno.
 
-   ```dotenv
-   PUBLIC_SUPABASE_URL=https://TU_PROYECTO.supabase.co
-   PUBLIC_SUPABASE_ANON_KEY=TU_CLAVE_PUBLICA
-   ```
-
-   Utiliza la clave pública anon/publicable, nunca una clave secret o service_role. `.env` está excluido de Git. Reinicia Astro después de cambiarla; para alojamiento estático, vuelve a compilar.
-4. En Supabase Auth habilita el acceso por correo y añade `http://localhost:5173` y la URL publicada a las redirecciones permitidas.
-5. Abre «Guardar en mi cuenta», introduce tu correo y abre el enlace recibido. Usa **la misma cuenta** en cada navegador y dispositivo.
-6. Espera a ver «Guardado en tu cuenta» antes de cerrar. «Guardando…», «Sin sincronizar» y «Guardado en este dispositivo» no significan que el plan ya esté en la nube.
-
-### Datos y aislamiento
-
-- `nutrition_foods`: catálogo de solo lectura para el cliente; no permite altas desde la app. La lista de IDs permitidos también se comprueba en el cliente.
-- `nutrition_daily_plans`: documento con ingredientes separados, cantidades y unidades de sus fichas, recetas elegidas, preferencias de café, objetivos y fecha; clave compuesta `(user_id, plan_date)`.
-- RLS limita las lecturas a la cuenta propietaria. Las escrituras solo pasan por `save_nutrition_daily_plan`, que comprueba sesión, alimentos, unidades de cantidad, fruta y cena.
-- Guardados automáticos con respaldo local inmediato, espera de 450 ms y cola serial por cuenta/fecha. La revisión se comprueba dentro de una transacción para no sobrescribir cambios de otro dispositivo.
-- Si existe un conflicto, se detienen nuevas escrituras y se ofrece cargar la versión de la cuenta. Antes de descartar el borrador se conserva una copia local de recuperación.
-- Realtime recarga cambios remotos cuando no hay cambios locales pendientes. Sin conexión se conserva el respaldo y se puede reintentar; no se presenta un fallo como un guardado en la nube.
-- Los borradores locales están separados por usuario. Un invitado no se importa silenciosamente al iniciar sesión: utiliza «Importar plan local de este día».
-- Los datos anteriores `mi-plato:FECHA` se pueden migrar sin convertir unidades ni cambiar cantidades. Se muestran como plan anterior hasta elegir A/B. Los originales se conservan.
+- `nutrition_foods`: 145 alimentos autorizados, de solo lectura para la web.
+- `nutrition_personal_plans`: un plan por fecha compartido por tus dispositivos, accesible únicamente con tu llave personal.
+- `nutrition_personal_settings`: hash de la llave, sin acceso público.
+- El guardado remoto requiere confirmación del servidor antes de mostrar «Sincronizado entre dispositivos».
+- Los errores conservan el respaldo local y permiten reintentar; los conflictos permiten elegir qué versión conservar.
+- Los días locales antiguos se recuperan sin importarlos manualmente. Los datos anteriores y las copias de recuperación no se eliminan.
+- La migración 003 conserva días de la tabla antigua si pertenecían a un solo propietario. No mezcla varios usuarios.
 
 ## Reglas implementadas
 

@@ -10,7 +10,7 @@ const source = JSON.parse(readFileSync(new URL('../data/catalogo.json', import.m
 const groupOf=f=>f.grupo_principal||(['carne','pescado_marisco','huevos','legumbres_derivados'].includes(f.categoria)||f.nombre.startsWith('Proteína de ')?'proteina':f.categoria==='frutos_secos_semillas'?'grasa':['verdura','carbohidrato','fruta','lacteos'].includes(f.categoria)?f.categoria:'otros');
 const catalogue=source.alimentos.map(f=>({...f,grupo:groupOf(f)}));
 const bootstrap={authorizedIds:catalogue.map(f=>f.id),foods:catalogue.filter(f=>['food_002','food_063','food_070','food_118','food_131','food_132','food_135','food_136','food_137','food_145'].includes(f.id)),count:catalogue.length,groups:['proteina','verdura','carbohidrato','grasa','fruta','lacteos','otros'].map(id=>({id,name:id,count:catalogue.filter(f=>f.grupo===id).length}))};
-function storage(){const m=new Map();return{getItem:k=>m.get(k)??null,setItem:(k,v)=>m.set(k,String(v)),removeItem:k=>m.delete(k)};}
+function storage(){const m=new Map();return{get length(){return m.size;},key:i=>Array.from(m.keys())[i]??null,getItem:k=>m.get(k)??null,setItem:(k,v)=>m.set(k,String(v)),removeItem:k=>m.delete(k)};}
 test('La interfaz React carga, cambia recetas y recalcula sin perder el plan',async()=>{
   const window=domino.createWindow('<html><body><div id="root"></div></body></html>','http://localhost:5173/');
   globalThis.window=window;globalThis.document=window.document;globalThis.HTMLElement=window.HTMLElement;globalThis.Node=window.Node;
@@ -142,44 +142,84 @@ test('La interfaz React carga, cambia recetas y recalcula sin perder el plan',as
   }finally{await act(async()=>root.unmount());globalThis.fetch=originalFetch;globalThis.IS_REACT_ACT_ENVIRONMENT=false;}
 });
 
-test('Una cuenta recupera el plan desde otro navegador y aísla otras cuentas',async()=>{
+test('Espacio personal: sin registro, sube comidas locales y recupera el día en otro dispositivo',async()=>{
   const window=domino.createWindow('<html><body><div id="root"></div></body></html>','http://localhost:5173/');
   globalThis.window=window;globalThis.document=window.document;globalThis.HTMLElement=window.HTMLElement;globalThis.Node=window.Node;
   Object.defineProperty(globalThis,'navigator',{configurable:true,value:window.navigator});globalThis.localStorage=storage();globalThis.IS_REACT_ACT_ENVIRONMENT=true;
-  const remote=new Map();const writes=[];
-  function cloud(userId){return{
-    auth:{getSession:async()=>({data:{session:{user:{id:userId,email:userId+'@example.test'}}}}),onAuthStateChange:()=>({data:{subscription:{unsubscribe(){}}}})},
-    from(table){const filters={};const builder={select(){return this;},eq(k,v){filters[k]=v;return this;},async order(){return{data:catalogue.filter(f=>f.grupo===filters.food_group).map(payload=>({payload})),error:null};},async maybeSingle(){assert.equal(table,'nutrition_daily_plans');assert.equal(filters.user_id,userId);return{data:remote.get(userId+':'+filters.plan_date)||null,error:null};}};return builder;},
-    async rpc(name,args){assert.equal(name,'save_nutrition_daily_plan');assert.equal(args.p_user_id,userId);const key=userId+':'+args.p_date,old=remote.get(key),revision=old?.revision||0;if(revision!==args.p_expected_revision)return{data:null,error:{code:'40001'}};const row={document:structuredClone(args.p_document),revision:revision+1};remote.set(key,row);writes.push({userId,document:row.document});return{data:{revision:row.revision},error:null};},
-    channel(){return{on(){return this;},subscribe(){return this;}};},async removeChannel(){},
-  };}
+  const remote=new Map(),writes=[],accessKey='a'.repeat(64);
+  let offline=false;
+  const client={
+    from(){const filters={};return{select(){return this;},eq(k,v){filters[k]=v;return this;},async order(){return{data:catalogue.filter(f=>f.grupo===filters.food_group).map(payload=>({payload})),error:null};}};},
+    async rpc(name,args){
+      if(offline)throw new Error('offline');
+      if(args.p_access_key!==accessKey)return{data:null,error:{code:'28000'}};
+      if(name==='check_nutrition_personal_access')return{data:true,error:null};
+      if(name==='read_nutrition_personal_plan')return{data:remote.get(args.p_date)||null,error:null};
+      assert.equal(name,'save_nutrition_personal_plan');
+      const old=remote.get(args.p_date),revision=old?.revision||0;
+      if(revision!==args.p_expected_revision)return{data:null,error:{code:'40001'}};
+      const row={document:structuredClone(args.p_document),revision:revision+1};remote.set(args.p_date,row);writes.push(row);return{data:{revision:row.revision},error:null};
+    },
+  };
+  const originalFetch=globalThis.fetch;globalThis.fetch=async url=>{const group=String(url).match(/group\/([^/]+)\.json/),id=String(url).match(/food\/([^/]+)\.json/);return new Response(JSON.stringify(group?catalogue.filter(f=>f.grupo===group[1]):catalogue.find(f=>f.id===id?.[1])));};
   const output=new URL('../.astro/planner-test.mjs',import.meta.url);
   await build({entryPoints:[new URL('../src/components/Planner.jsx',import.meta.url).pathname],outfile:output.pathname,bundle:true,format:'esm',platform:'node',jsx:'automatic',packages:'external',define:{'import.meta.env.PUBLIC_SUPABASE_URL':'""','import.meta.env.PUBLIC_SUPABASE_ANON_KEY':'""'},logLevel:'silent'});
-  const React=await import('react'),{act}=React,{createRoot}=await import('react-dom/client'),{default:Planner}=await import(output.href+'?cloud');
+  const React=await import('react'),{act}=React,{createRoot}=await import('react-dom/client'),{default:Planner}=await import(output.href+'?personal');
   let root=createRoot(document.getElementById('root'));
   async function settle(fn,ms=30){await act(async()=>{fn?.();await new Promise(r=>setTimeout(r,ms));});}
   const meal=name=>Array.from(document.querySelectorAll('.meal')).find(el=>el.querySelector('h2').textContent===name);
   const button=(el,text)=>Array.from(el.querySelectorAll('button')).find(b=>b.textContent.includes(text));
   const click=el=>{assert.ok(el);const e=document.createEvent('MouseEvents');e.initMouseEvent('click',true,true,window,1,0,0,0,0,false,false,false,false,0,null);el.dispatchEvent(e);};
+  async function unlock(key){
+    if(!document.querySelector('input[name=personal_access_key]'))await settle(()=>click(button(document.querySelector('.topbar'),'Conectar dispositivos')));
+    assert.equal(document.querySelectorAll('input[type=email]').length,0);
+    await settle(()=>{const input=document.querySelector('input[name=personal_access_key]');Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype,'value').set.call(input,key);const event=document.createEvent('Event');event.initEvent('input',true,true);input.dispatchEvent(event);});
+    await settle(()=>{const event=document.createEvent('Event');event.initEvent('submit',true,true);document.querySelector('.personal-access form').dispatchEvent(event);},100);
+  }
   try{
-    await settle(()=>root.render(React.createElement(Planner,{bootstrap,client:cloud('account-a')})));
+    await settle(()=>root.render(React.createElement(Planner,{bootstrap,client})));
     await settle(()=>click(button(meal('Desayuno'),'Pan con relleno')));
     await settle(()=>click(button(meal('Merienda'),'Yogur con fruta')));
-    await settle(null,500);
     const date=document.querySelector('input[type=date]').value;
-    assert.equal(remote.get('account-a:'+date).document.choices.Merienda,'B');assert.ok(writes.length>0);
+    assert.equal(remote.size,0);
+    const oldDay=JSON.parse(localStorage.getItem('mi-plato-v3:guest:'+date));oldDay.document.date='2026-01-01';localStorage.setItem('mi-plato-v3:guest:2026-01-01',JSON.stringify(oldDay));
+    await unlock('b'.repeat(64));
+    assert.match(document.querySelector('.notice.error').textContent,/llave personal no es válida/);assert.equal(remote.size,0);
+    await unlock(accessKey);
+    await settle(null,500);
+    assert.ok(remote.has('2026-01-01'),'Other local days upload without manual import');
+    assert.equal(remote.get(date).document.choices.Merienda,'B');assert.ok(writes.length>0);
+    assert.match(document.querySelector('.save-line').textContent,/Sincronizado entre dispositivos/);
+    assert.ok(!document.querySelector('.app-shell').textContent.includes('Importar plan'));
     await act(async()=>root.unmount());
-    // A new browser has no localStorage, but authenticates as the same account.
     globalThis.localStorage=storage();document.body.innerHTML='<div id="root"></div>';root=createRoot(document.getElementById('root'));
-    await settle(()=>root.render(React.createElement(Planner,{bootstrap,client:cloud('account-a')})));
+    await settle(()=>root.render(React.createElement(Planner,{bootstrap,client})));
+    await unlock(accessKey);
     assert.equal(meal('Desayuno').querySelectorAll('.ingredient').length,2);
     assert.equal(meal('Merienda').querySelectorAll('.ingredient').length,3);
-    assert.match(document.querySelector('.save-line').textContent,/Guardado en tu cuenta/);
+    assert.match(document.querySelector('.save-line').textContent,/Sincronizado entre dispositivos/);
+    // A failed write leaves a dirty local recovery copy and is retried explicitly.
+    offline=true;await settle(()=>click(button(meal('Desayuno'),'Nada')),500);
+    assert.equal(JSON.parse(localStorage.getItem('mi-plato-v3:guest:'+date)).dirty,true);
+    assert.equal(remote.get(date).document.choices.Desayuno,'A');
+    offline=false;await settle(()=>click(button(document.querySelector('.notice.error'),'Reintentar')),100);
+    assert.equal(remote.get(date).document.choices.Desayuno,'none');
+    const outside=structuredClone(remote.get(date));outside.revision++;outside.document.updatedAt='external-edit';outside.document.goals.kcal=1700;remote.set(date,outside);
+    await settle(()=>click(button(meal('Desayuno'),'Pan con relleno')),500);
+    assert.match(document.querySelector('.notice.error').textContent,/otro dispositivo|dos versiones/);
+    assert.equal(remote.get(date).document.goals.kcal,1700);
+    await settle(()=>click(button(document.querySelector('.notice.error'),'Conservar lo de aquí')),100);
+    assert.equal(remote.get(date).document.goals.kcal,1500);
+    assert.equal(remote.get(date).document.choices.Desayuno,'A');
+    const outsideAgain=structuredClone(remote.get(date));outsideAgain.revision++;outsideAgain.document.updatedAt='external-edit-2';outsideAgain.document.goals.kcal=1800;remote.set(date,outsideAgain);
+    await settle(()=>click(button(meal('Desayuno'),'Nada')),500);
+    await settle(()=>click(button(document.querySelector('.notice.error'),'Cargar lo guardado')),100);
+    assert.equal(meal('Desayuno').querySelectorAll('.ingredient').length,2);
+    assert.equal(JSON.parse(localStorage.getItem('mi-plato-v3:guest:'+date)).document.goals.kcal,1800);
     await act(async()=>root.unmount());
-    // Another account in the same browser never receives the first account's draft.
     document.body.innerHTML='<div id="root"></div>';root=createRoot(document.getElementById('root'));
-    await settle(()=>root.render(React.createElement(Planner,{bootstrap,client:cloud('account-b')})));
-    assert.equal(meal('Desayuno').querySelectorAll('.ingredient').length,0);assert.equal(meal('Merienda').querySelectorAll('.ingredient').length,0);
-    assert.equal(remote.has('account-b:'+date),false);
-  }finally{await act(async()=>root.unmount());globalThis.IS_REACT_ACT_ENVIRONMENT=false;}
+    await settle(()=>root.render(React.createElement(Planner,{bootstrap,client})));
+    assert.equal(meal('Merienda').querySelectorAll('.ingredient').length,3);
+    assert.match(document.querySelector('.save-line').textContent,/Sincronizado entre dispositivos/);
+  }finally{await act(async()=>root.unmount());globalThis.fetch=originalFetch;globalThis.IS_REACT_ACT_ENVIRONMENT=false;}
 });

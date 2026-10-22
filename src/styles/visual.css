@@ -297,3 +297,10 @@ footer { font-size: 11px; padding: 30px 3px 36px; }
 .dinner-auto-note { font-size:12px; line-height:1.85; color:#4f6d40; background:#edf4e4; border:1px solid #dbe7cc; border-radius:12px; padding:12px 14px; }
 .yogurt-unit { display:grid; flex-shrink:0; gap:3px; text-align:right; padding:10px 13px; border:1px solid #dce5cf; background:#f2f6ea; border-radius:12px; font-size:13px; color:#4e6b3e; }
 .yogurt-unit small { font-size:11px; margin:0; }
+.personal-access { max-width:680px; margin-left:auto; }
+.personal-access .eyebrow { display:block; margin-bottom:8px; }
+.personal-access form { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:12px; }
+.personal-access label { min-width:0; }
+.personal-access input { min-height:50px; border:1px solid #d5dec9; border-radius:12px; padding:0 14px; background:var(--paper); font-size:16px; width:100%; }
+.personal-access form>p { grid-column:1/-1; margin:0; }
+@media(max-width:600px){.personal-access form{grid-template-columns:1fr}.personal-access .primary-button{width:100%}}
